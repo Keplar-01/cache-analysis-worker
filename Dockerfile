@@ -5,10 +5,10 @@ FROM --platform=linux/amd64 golang:1.22-bookworm AS builder
 
 WORKDIR /app
 
-COPY worker-cache-interpreter/go.mod worker-cache-interpreter/go.sum ./
+COPY go.mod go.sum ./
 RUN go mod download
 
-COPY worker-cache-interpreter/ .
+COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -o /worker-cache ./cmd
 
 # ============================================================
@@ -27,7 +27,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 COPY --from=builder /worker-cache /usr/local/bin/worker-cache
-COPY worker-cache-interpreter/cats /usr/local/bin/cats
+COPY cats /usr/local/bin/cats
 RUN chmod +x /usr/local/bin/worker-cache /usr/local/bin/cats
 
 ENTRYPOINT ["/usr/local/bin/worker-cache"]
