@@ -34,7 +34,12 @@ func NewCacheUseCase(
 
 // HandleStartEvent реализует kafka.MessageHandler.
 func (uc *CacheUseCase) HandleStartEvent(ctx context.Context, event model.StartEvent) error {
-	log.Printf("[usecase] processing cache task %s, file: %s", event.TaskID, event.FileS3Path)
+	if event.CacheConfigS3Path != "" {
+		log.Printf("[usecase] processing cache task %s, file: %s, cache_config_s3_path: %s",
+			event.TaskID, event.FileS3Path, event.CacheConfigS3Path)
+	} else {
+		log.Printf("[usecase] processing cache task %s, file: %s (no cache_config_s3_path in event)", event.TaskID, event.FileS3Path)
+	}
 
 	if err := uc.process(ctx, event); err != nil {
 		log.Printf("[usecase] task %s failed: %v", event.TaskID, err)

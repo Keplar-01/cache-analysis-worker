@@ -6,6 +6,9 @@ type StartEvent struct {
 	FileS3Path       string `json:"file_s3_path"`
 	ProjectID        string `json:"project_id"`
 	CacheProfileHash string `json:"cache_profile_hash"`
+	// CacheConfigS3Path — объект конфигурации из MinIO (bucket/key как у file_s3_path).
+	// Коллега может скачать через MinIO перед вызовом интерпретатора; см. документацию воркера.
+	CacheConfigS3Path string `json:"cache_config_s3_path,omitempty"`
 }
 
 // CompletedEvent — исходящее сообщение в events.analysis.cache_completed.
