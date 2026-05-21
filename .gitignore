@@ -8,6 +8,4 @@
 /vendor/
 /tmp/
 .env
-
-/cats
 *_result
