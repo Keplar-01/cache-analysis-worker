@@ -68,7 +68,7 @@ func (r *ClickHouseRepo) WriteCacheSimResult(ctx context.Context, taskID string,
 	}
 
 	// 2. Summary по уровням кэша → dynamic_summary
-	for _, level := range []model.CacheLevelSummary{result.L1, result.L2} {
+	for _, level := range result.CacheLevels() {
 		if level.CacheLevel == "" {
 			continue
 		}

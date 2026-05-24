@@ -24,7 +24,7 @@ func Load() *Config {
 		MinioAccessKey:        getEnv("MINIO_ACCESS_KEY", "minioadmin"),
 		MinioSecretKey:        getEnv("MINIO_SECRET_KEY", "minioadmin123"),
 		InterpreterBinary:     getEnv("INTERPRETER_BINARY", "/usr/local/bin/cats"),
-		InterpreterTimeoutSec: getEnvInt("INTERPRETER_TIMEOUT_SEC", 30),
+		InterpreterTimeoutSec: getEnvInt("INTERPRETER_TIMEOUT_SEC", 600),
 	}
 }
 

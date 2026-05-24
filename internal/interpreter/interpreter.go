@@ -27,45 +27,50 @@ type Interpreter struct {
 }
 
 func New(binaryPath string, timeoutSec int) *Interpreter {
-	if timeoutSec <= 0 {
-		timeoutSec = 30
-	}
 	return &Interpreter{binaryPath: binaryPath, timeoutSec: timeoutSec}
 }
 
-// Run запускает cats над .c файлом и парсит stdout.
-func (i *Interpreter) Run(ctx context.Context, sourceFile string) (*model.CacheSimResult, error) {
+// Run запускает cats над .c файлом и читает JSON-артефакт *_result.json.
+func (i *Interpreter) Run(ctx context.Context, sourceFile, configFile string) (*model.CacheSimResult, error) {
 	var stdout, stderr bytes.Buffer
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(i.timeoutSec)*time.Second)
-	defer cancel()
+	if i.timeoutSec > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(i.timeoutSec)*time.Second)
+		defer cancel()
+	}
 
-	cmd := exec.CommandContext(ctx, i.binaryPath, filepath.Base(sourceFile), "json")
+	args := []string{filepath.Base(sourceFile), "json"}
+	if strings.TrimSpace(configFile) != "" {
+		args = append(args, filepath.Base(configFile))
+	}
+
+	cmd := exec.CommandContext(ctx, i.binaryPath, args...)
 	cmd.Dir = filepath.Dir(sourceFile)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if i.timeoutSec > 0 && ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("cachesim exceeded timeout %ds, stderr: %s", i.timeoutSec, strings.TrimSpace(stderr.String()))
 		}
 		return nil, fmt.Errorf("cachesim exec failed: %w, stderr: %s", err, stderr.String())
 	}
 
-	rawOutput, err := i.readResult(sourceFile, stdout.String())
+	rawOutput, err := i.readResult(sourceFile)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := parseOutput(rawOutput)
+	result, err := parseJSONOutput(rawOutput)
 	if err != nil {
-		return nil, fmt.Errorf("parse cachesim output: %w", err)
+		return nil, fmt.Errorf("parse cachesim JSON output: %w", err)
 	}
 
 	result.SourceFile = filepath.Base(sourceFile)
 	return result, nil
 }
 
-func (i *Interpreter) readResult(sourceFile, stdout string) (string, error) {
+func (i *Interpreter) readResult(sourceFile string) (string, error) {
 	resultFile := resultFilePath(sourceFile)
 	if payload, err := os.ReadFile(resultFile); err == nil {
 		trimmed := strings.TrimSpace(string(payload))
@@ -83,12 +88,7 @@ func (i *Interpreter) readResult(sourceFile, stdout string) (string, error) {
 		}
 	}
 
-	trimmedStdout := strings.TrimSpace(stdout)
-	if trimmedStdout == "" {
-		return "", fmt.Errorf("cachesim produced neither stdout payload nor result file %s", filepath.Base(resultFile))
-	}
-
-	return trimmedStdout, nil
+	return "", fmt.Errorf("cachesim produced no JSON result file %s", filepath.Base(resultFile))
 }
 
 func resultFilePath(sourceFile string) string {
@@ -97,7 +97,7 @@ func resultFilePath(sourceFile string) string {
 	if ext != "" {
 		name = strings.TrimSuffix(name, ext)
 	}
-	return filepath.Join(filepath.Dir(sourceFile), name+"_result")
+	return filepath.Join(filepath.Dir(sourceFile), name+"_result.json")
 }
 
 func findFallbackResultFile(sourceFile string) (string, bool) {
@@ -108,7 +108,7 @@ func findFallbackResultFile(sourceFile string) (string, bool) {
 
 	var resultFile string
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_result") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_result.json") {
 			continue
 		}
 		if resultFile != "" {
@@ -147,7 +147,7 @@ func findFallbackResultFile(sourceFile string) (string, bool) {
 
 var (
 	reTime       = regexp.MustCompile(`Time is ([\d.]+)`)
-	reCacheLevel = regexp.MustCompile(`^Cache (L[12])$`)
+	reCacheLevel = regexp.MustCompile(`^Cache (L[123])$`)
 	reCacheSize  = regexp.MustCompile(`Cache size (\d+) kB (\d+)-way`)
 	reLineSize   = regexp.MustCompile(`Cache line size (\d+)`)
 	reAccess     = regexp.MustCompile(`^Cache access: (\d+)`)
@@ -238,8 +238,10 @@ func parseJSONOutput(raw string) (*model.CacheSimResult, error) {
 	if result.L1.CacheLevel == "" {
 		return nil, fmt.Errorf("failed to parse L1 cache block from CacheSim JSON output")
 	}
-	result.MemoryReads = result.L2.MissesRead
-	result.MemoryWrites = result.L2.MissesWrite
+	levels := result.CacheLevels()
+	deepest := levels[len(levels)-1]
+	result.MemoryReads = deepest.MissesRead
+	result.MemoryWrites = deepest.MissesWrite
 	return result, nil
 }
 
@@ -326,6 +328,8 @@ func applyJSONLevel(result *model.CacheSimResult, level cacheJSONLevel) {
 		result.L1 = summary
 	case "L2":
 		result.L2 = summary
+	case "L3":
+		result.L3 = summary
 	}
 
 	names := make([]string, 0, len(level.Arrays))
@@ -385,12 +389,16 @@ func parseTextOutput(raw string) (*model.CacheSimResult, error) {
 
 		if m := reCacheLevel.FindStringSubmatch(line); m != nil {
 			level := m[1]
-			if level == "L1" {
+			switch level {
+			case "L1":
 				result.L1.CacheLevel = "L1"
 				currentLevel = &result.L1
-			} else {
+			case "L2":
 				result.L2.CacheLevel = "L2"
 				currentLevel = &result.L2
+			default:
+				result.L3.CacheLevel = "L3"
+				currentLevel = &result.L3
 			}
 			continue
 		}

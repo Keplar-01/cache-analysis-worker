@@ -61,6 +61,35 @@ func (m *MinIOClient) DownloadSource(ctx context.Context, s3Path, workDir string
 	return localPath, nil
 }
 
+func (m *MinIOClient) DownloadObject(ctx context.Context, s3Path, workDir string) (string, error) {
+	parts := strings.SplitN(s3Path, "/", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid s3 path format: %s", s3Path)
+	}
+
+	bucket, key := parts[0], parts[1]
+
+	obj, err := m.client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("get object %s/%s: %w", bucket, key, err)
+	}
+	defer obj.Close()
+
+	localPath := filepath.Join(workDir, filepath.Base(key))
+
+	f, err := os.Create(localPath)
+	if err != nil {
+		return "", fmt.Errorf("create local file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, obj); err != nil {
+		return "", fmt.Errorf("copy from minio: %w", err)
+	}
+
+	return localPath, nil
+}
+
 // UploadArtifact загружает JSON-результат в MinIO.
 func (m *MinIOClient) UploadArtifact(ctx context.Context, taskID string, data []byte) (string, error) {
 	key := fmt.Sprintf("%s/cache-out.json", taskID)

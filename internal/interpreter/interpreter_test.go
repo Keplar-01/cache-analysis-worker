@@ -87,9 +87,32 @@ func TestParseJSONOutputAfterPrefix(t *testing.T) {
 
 func TestResultFilePath(t *testing.T) {
 	got := resultFilePath("/tmp/source/test.c")
-	want := "/tmp/source/test_result"
+	want := "/tmp/source/test_result.json"
 	if got != want {
 		t.Fatalf("resultFilePath() = %q, want %q", got, want)
+	}
+}
+
+func TestRunPrefersJSONResultFileOverLocalizedStdout(t *testing.T) {
+	workDir := t.TempDir()
+	sourcePath := filepath.Join(workDir, "sample.c")
+	if err := os.WriteFile(sourcePath, []byte("int main(){return 0;}"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	scriptPath := filepath.Join(workDir, "fake-cats.sh")
+	script := "#!/bin/sh\ncat <<'EOF' > sample_result.json\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2}\nEOF\necho 'Кэш L1'\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake interpreter: %v", err)
+	}
+
+	interp := New(scriptPath, 5)
+	result, err := interp.Run(context.Background(), sourcePath, "")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.L1.TotalMisses != 3 {
+		t.Fatalf("unexpected parsed result: %+v", result)
 	}
 }
 
@@ -101,13 +124,13 @@ func TestRunPrefersResultFile(t *testing.T) {
 	}
 
 	scriptPath := filepath.Join(workDir, "fake-cats.sh")
-	script := "#!/bin/sh\ncat <<'EOF' > sample_result\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2,\"array a_read\":1,\"array a_write\":2}\n{\"level_name\":\"L2\",\"cacheSize\":262144,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":5,\"hit_write\":6,\"miss_read\":7,\"miss_write\":8,\"array a_read\":7,\"array a_write\":8}\nEOF\necho ignored stdout\n"
+	script := "#!/bin/sh\ncat <<'EOF' > sample_result.json\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2,\"array a_read\":1,\"array a_write\":2}\n{\"level_name\":\"L2\",\"cacheSize\":262144,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":5,\"hit_write\":6,\"miss_read\":7,\"miss_write\":8,\"array a_read\":7,\"array a_write\":8}\nEOF\necho ignored stdout\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake interpreter: %v", err)
 	}
 
 	interp := New(scriptPath, 5)
-	result, err := interp.Run(context.Background(), sourcePath)
+	result, err := interp.Run(context.Background(), sourcePath, "")
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -127,17 +150,47 @@ func TestRunFallsBackToSingleResultFile(t *testing.T) {
 	}
 
 	scriptPath := filepath.Join(workDir, "fake-cats.sh")
-	script := "#!/bin/sh\ncat <<'EOF' > short_result\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2}\n{\"level_name\":\"L2\",\"cacheSize\":262144,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":5,\"hit_write\":6,\"miss_read\":7,\"miss_write\":8}\nEOF\n"
+	script := "#!/bin/sh\ncat <<'EOF' > short_result.json\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2}\n{\"level_name\":\"L2\",\"cacheSize\":262144,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":5,\"hit_write\":6,\"miss_read\":7,\"miss_write\":8}\nEOF\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake interpreter: %v", err)
 	}
 
 	interp := New(scriptPath, 5)
-	result, err := interp.Run(context.Background(), sourcePath)
+	result, err := interp.Run(context.Background(), sourcePath, "")
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	if result.L1.CacheLevel != "L1" || result.L2.CacheLevel != "L2" {
 		t.Fatalf("unexpected parsed result: %+v", result)
+	}
+}
+
+func TestRunWithoutTimeoutAllowsZeroTimeoutConfig(t *testing.T) {
+	workDir := t.TempDir()
+	sourcePath := filepath.Join(workDir, "sample.c")
+	if err := os.WriteFile(sourcePath, []byte("int main(){return 0;}"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	scriptPath := filepath.Join(workDir, "fake-cats.sh")
+	script := "#!/bin/sh\ncat <<'EOF' > sample_result.json\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2}\nEOF\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake interpreter: %v", err)
+	}
+
+	interp := New(scriptPath, 0)
+	result, err := interp.Run(context.Background(), sourcePath, "")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.L1.TotalMisses != 3 {
+		t.Fatalf("unexpected parsed result: %+v", result)
+	}
+}
+
+func TestNewPreservesTenMinuteTimeout(t *testing.T) {
+	interp := New("/tmp/fake-cats", 600)
+	if interp.timeoutSec != 600 {
+		t.Fatalf("timeoutSec = %d, want 600", interp.timeoutSec)
 	}
 }

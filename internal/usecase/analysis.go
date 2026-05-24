@@ -64,17 +64,26 @@ func (uc *CacheUseCase) process(ctx context.Context, event model.StartEvent) err
 		return fmt.Errorf("download source: %w", err)
 	}
 
+	configFile := ""
+	if event.CacheConfigS3Path != "" {
+		configFile, err = uc.minio.DownloadObject(ctx, event.CacheConfigS3Path, workDir)
+		if err != nil {
+			return fmt.Errorf("download cache config: %w", err)
+		}
+	}
+
 	log.Printf("[usecase] downloaded .c file to %s", sourceFile)
 
 	// 2. Запускаем cats над локальным .c файлом.
-	result, err := uc.interp.Run(ctx, sourceFile)
+	result, err := uc.interp.Run(ctx, sourceFile, configFile)
 	if err != nil {
 		return fmt.Errorf("cachesim run: %w", err)
 	}
 
-	log.Printf("[usecase] CacheSim done: L1 access=%d miss=%d, L2 access=%d miss=%d, arrays=%d",
+	log.Printf("[usecase] CacheSim done: L1 access=%d miss=%d, L2 access=%d miss=%d, L3 access=%d miss=%d, arrays=%d",
 		result.L1.TotalAccesses, result.L1.TotalMisses,
 		result.L2.TotalAccesses, result.L2.TotalMisses,
+		result.L3.TotalAccesses, result.L3.TotalMisses,
 		len(result.Arrays))
 
 	// 3. Загружаем JSON-артефакт в MinIO
