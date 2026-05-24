@@ -2,13 +2,13 @@
 	"num_levels": 2,
 	"l1": {
 		"level_name": "L1",
-		"cacheSize": 26214, 
+		"cacheSize": 262144, 
 		"cacheBlockSize": 64,
 		"way": 8
 	},
 	"l2": {
 		"level_name": "L2",
-		"cacheSize": 26214, 
+		"cacheSize": 262144, 
 		"cacheBlockSize": 64,
 		"way": 8
 	}
