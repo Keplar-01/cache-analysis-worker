@@ -47,15 +47,15 @@ func (i *Interpreter) Run(ctx context.Context, sourceFile, configFile string) (*
 	// Обязательно передаем аргумент "json"
 	args := []string{shortName, "json"}
 
-	/*
-		if strings.TrimSpace(configFile) != "" {
-			shortConfig := filepath.Join(workDir, "cfg.json")
-			if err := os.Rename(configFile, shortConfig); err != nil {
-				return nil, fmt.Errorf("rename config: %w", err)
-			}
-			args = append(args, "cfg.json")
+	// cats автоматически ищет файл config.json в текущей директории запуска.
+	// Поэтому мы переименовываем скачанный конфиг строго в "config.json",
+	// но НЕ передаем его в аргументы командной строки.
+	if strings.TrimSpace(configFile) != "" {
+		targetConfig := filepath.Join(workDir, "config.json")
+		if err := os.Rename(configFile, targetConfig); err != nil {
+			return nil, fmt.Errorf("rename config: %w", err)
 		}
-	*/
+	}
 
 	var stdout, stderr bytes.Buffer
 	if i.timeoutSec > 0 {
@@ -76,7 +76,7 @@ func (i *Interpreter) Run(ctx context.Context, sourceFile, configFile string) (*
 		return nil, fmt.Errorf("cachesim exec failed: %w, stderr: %s, stdout: %s", err, stderr.String(), stdout.String())
 	}
 
-	// 2. Читаем результат. Ожидаем файл <baseName>_result
+	// 2. Читаем результат. Ожидаем файл <baseName>_result (без расширения)
 	var rawOutput string
 	expectedResultName := baseName + "_result"
 	resultPath := filepath.Join(workDir, expectedResultName)

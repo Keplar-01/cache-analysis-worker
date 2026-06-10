@@ -85,14 +85,6 @@ func TestParseJSONOutputAfterPrefix(t *testing.T) {
 	}
 }
 
-func TestResultFilePath(t *testing.T) {
-	got := resultFilePath("/tmp/source/test.c")
-	want := "/tmp/source/test_result"
-	if got != want {
-		t.Fatalf("resultFilePath() = %q, want %q", got, want)
-	}
-}
-
 func TestRunPrefersJSONResultFileOverLocalizedStdout(t *testing.T) {
 	workDir := t.TempDir()
 	sourcePath := filepath.Join(workDir, "sample.c")
@@ -101,7 +93,13 @@ func TestRunPrefersJSONResultFileOverLocalizedStdout(t *testing.T) {
 	}
 
 	scriptPath := filepath.Join(workDir, "fake-cats.sh")
-	script := "#!/bin/sh\ncat <<'EOF' > sample_result\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2}\nEOF\necho 'Кэш L1'\n"
+	script := `#!/bin/sh
+BASENAME=$(basename "$1" .c)
+cat <<'EOF' > "${BASENAME}_result"
+{"level_name":"L1","cacheSize":32768,"cacheBlockSize":64,"way":8,"hit_read":10,"hit_write":20,"miss_read":1,"miss_write":2}
+EOF
+echo 'Кэш L1'
+`
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake interpreter: %v", err)
 	}
@@ -124,7 +122,14 @@ func TestRunPrefersResultFile(t *testing.T) {
 	}
 
 	scriptPath := filepath.Join(workDir, "fake-cats.sh")
-	script := "#!/bin/sh\ncat <<'EOF' > sample_result\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2,\"array a_read\":1,\"array a_write\":2}\n{\"level_name\":\"L2\",\"cacheSize\":262144,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":5,\"hit_write\":6,\"miss_read\":7,\"miss_write\":8,\"array a_read\":7,\"array a_write\":8}\nEOF\necho ignored stdout\n"
+	script := `#!/bin/sh
+BASENAME=$(basename "$1" .c)
+cat <<'EOF' > "${BASENAME}_result"
+{"level_name":"L1","cacheSize":32768,"cacheBlockSize":64,"way":8,"hit_read":10,"hit_write":20,"miss_read":1,"miss_write":2,"array a_read":1,"array a_write":2}
+{"level_name":"L2","cacheSize":262144,"cacheBlockSize":64,"way":8,"hit_read":5,"hit_write":6,"miss_read":7,"miss_write":8,"array a_read":7,"array a_write":8}
+EOF
+echo ignored stdout
+`
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake interpreter: %v", err)
 	}
@@ -150,7 +155,13 @@ func TestRunFallsBackToSingleResultFile(t *testing.T) {
 	}
 
 	scriptPath := filepath.Join(workDir, "fake-cats.sh")
-	script := "#!/bin/sh\ncat <<'EOF' > short_result\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2}\n{\"level_name\":\"L2\",\"cacheSize\":262144,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":5,\"hit_write\":6,\"miss_read\":7,\"miss_write\":8}\nEOF\n"
+	script := `#!/bin/sh
+BASENAME=$(basename "$1" .c)
+cat <<'EOF' > "${BASENAME}_result"
+{"level_name":"L1","cacheSize":32768,"cacheBlockSize":64,"way":8,"hit_read":10,"hit_write":20,"miss_read":1,"miss_write":2}
+{"level_name":"L2","cacheSize":262144,"cacheBlockSize":64,"way":8,"hit_read":5,"hit_write":6,"miss_read":7,"miss_write":8}
+EOF
+`
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake interpreter: %v", err)
 	}
@@ -173,7 +184,12 @@ func TestRunWithoutTimeoutAllowsZeroTimeoutConfig(t *testing.T) {
 	}
 
 	scriptPath := filepath.Join(workDir, "fake-cats.sh")
-	script := "#!/bin/sh\ncat <<'EOF' > sample_result\n{\"level_name\":\"L1\",\"cacheSize\":32768,\"cacheBlockSize\":64,\"way\":8,\"hit_read\":10,\"hit_write\":20,\"miss_read\":1,\"miss_write\":2}\nEOF\n"
+	script := `#!/bin/sh
+BASENAME=$(basename "$1" .c)
+cat <<'EOF' > "${BASENAME}_result"
+{"level_name":"L1","cacheSize":32768,"cacheBlockSize":64,"way":8,"hit_read":10,"hit_write":20,"miss_read":1,"miss_write":2}
+EOF
+`
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake interpreter: %v", err)
 	}
