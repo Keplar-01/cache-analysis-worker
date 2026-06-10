@@ -30,8 +30,33 @@ func New(binaryPath string, timeoutSec int) *Interpreter {
 	return &Interpreter{binaryPath: binaryPath, timeoutSec: timeoutSec}
 }
 
-// Run запускает cats над .c файлом и читает JSON-артефакт *_result.json.
+// Run запускает cats над .c файлом и читает JSON-артефакт.
 func (i *Interpreter) Run(ctx context.Context, sourceFile, configFile string) (*model.CacheSimResult, error) {
+	originalSourceName := filepath.Base(sourceFile)
+	workDir := filepath.Dir(sourceFile)
+
+	// 1. Генерируем безопасное имя (Unix timestamp занимает 10 символов, лимит cats - 13)
+	baseName := fmt.Sprintf("%d", time.Now().Unix())
+	shortName := baseName + ".c"
+	shortSource := filepath.Join(workDir, shortName)
+
+	if err := os.Rename(sourceFile, shortSource); err != nil {
+		return nil, fmt.Errorf("rename source: %w", err)
+	}
+
+	// Обязательно передаем аргумент "json"
+	args := []string{shortName, "json"}
+
+	/*
+		if strings.TrimSpace(configFile) != "" {
+			shortConfig := filepath.Join(workDir, "cfg.json")
+			if err := os.Rename(configFile, shortConfig); err != nil {
+				return nil, fmt.Errorf("rename config: %w", err)
+			}
+			args = append(args, "cfg.json")
+		}
+	*/
+
 	var stdout, stderr bytes.Buffer
 	if i.timeoutSec > 0 {
 		var cancel context.CancelFunc
@@ -39,13 +64,8 @@ func (i *Interpreter) Run(ctx context.Context, sourceFile, configFile string) (*
 		defer cancel()
 	}
 
-	args := []string{filepath.Base(sourceFile), "json"}
-	if strings.TrimSpace(configFile) != "" {
-		args = append(args, filepath.Base(configFile))
-	}
-
 	cmd := exec.CommandContext(ctx, i.binaryPath, args...)
-	cmd.Dir = filepath.Dir(sourceFile)
+	cmd.Dir = workDir
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -53,97 +73,56 @@ func (i *Interpreter) Run(ctx context.Context, sourceFile, configFile string) (*
 		if i.timeoutSec > 0 && ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("cachesim exceeded timeout %ds, stderr: %s", i.timeoutSec, strings.TrimSpace(stderr.String()))
 		}
-		return nil, fmt.Errorf("cachesim exec failed: %w, stderr: %s", err, stderr.String())
+		return nil, fmt.Errorf("cachesim exec failed: %w, stderr: %s, stdout: %s", err, stderr.String(), stdout.String())
 	}
 
-	rawOutput, err := i.readResult(sourceFile)
-	if err != nil {
-		return nil, err
-	}
+	// 2. Читаем результат. Ожидаем файл <baseName>_result
+	var rawOutput string
+	expectedResultName := baseName + "_result"
+	resultPath := filepath.Join(workDir, expectedResultName)
+	payload, err := os.ReadFile(resultPath)
 
-	result, err := parseJSONOutput(rawOutput)
-	if err != nil {
-		return nil, fmt.Errorf("parse cachesim JSON output: %w", err)
-	}
-
-	result.SourceFile = filepath.Base(sourceFile)
-	return result, nil
-}
-
-func (i *Interpreter) readResult(sourceFile string) (string, error) {
-	resultFile := resultFilePath(sourceFile)
-	if payload, err := os.ReadFile(resultFile); err == nil {
-		trimmed := strings.TrimSpace(string(payload))
-		if trimmed != "" {
-			return trimmed, nil
+	if err == nil && len(bytes.TrimSpace(payload)) > 0 {
+		rawOutput = string(payload)
+	} else {
+		// Fallback 1: Ищем ЛЮБОЙ файл, заканчивающийся на _result (папка изолирована, он там один)
+		entries, _ := os.ReadDir(workDir)
+		found := false
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), "_result") {
+				if p, err := os.ReadFile(filepath.Join(workDir, e.Name())); err == nil && len(bytes.TrimSpace(p)) > 0 {
+					rawOutput = string(p)
+					found = true
+					break
+				}
+			}
 		}
-	}
 
-	if fallbackFile, ok := findFallbackResultFile(sourceFile); ok {
-		if payload, err := os.ReadFile(fallbackFile); err == nil {
-			trimmed := strings.TrimSpace(string(payload))
-			if trimmed != "" {
-				return trimmed, nil
+		// Fallback 2: Проверяем stdout (иногда cats пишет JSON прямо в консоль)
+		if !found {
+			if stdout.Len() > 0 && strings.Contains(stdout.String(), "{") {
+				rawOutput = stdout.String()
+			} else {
+				var files []string
+				for _, e := range entries {
+					files = append(files, e.Name())
+				}
+				return nil, fmt.Errorf("cachesim produced no result file. Dir: %v, stdout: %s, stderr: %s", files, stdout.String(), stderr.String())
 			}
 		}
 	}
 
-	return "", fmt.Errorf("cachesim produced no JSON result file %s", filepath.Base(resultFile))
-}
-
-func resultFilePath(sourceFile string) string {
-	name := filepath.Base(sourceFile)
-	ext := filepath.Ext(name)
-	if ext != "" {
-		name = strings.TrimSuffix(name, ext)
-	}
-	return filepath.Join(filepath.Dir(sourceFile), name+"_result.json")
-}
-
-func findFallbackResultFile(sourceFile string) (string, bool) {
-	entries, err := os.ReadDir(filepath.Dir(sourceFile))
+	result, err := parseOutput(rawOutput)
 	if err != nil {
-		return "", false
+		return nil, fmt.Errorf("parse cachesim output: %w", err)
 	}
 
-	var resultFile string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_result.json") {
-			continue
-		}
-		if resultFile != "" {
-			return "", false
-		}
-		resultFile = filepath.Join(filepath.Dir(sourceFile), entry.Name())
-	}
-
-	if resultFile == "" {
-		return "", false
-	}
-	return resultFile, true
+	// Возвращаем оригинальное имя файла для корректного сохранения в БД
+	result.SourceFile = originalSourceName
+	return result, nil
 }
 
 // --- Парсинг stdout CacheSim ---
-//
-// Формат вывода:
-//   Time is 1.44955
-//
-//   Cache L1
-//   Cache size 32 kB 8-way
-//   Cache line size 64
-//   Cache access: 4003000
-//   Cache hit: 4002812 (write - 1002812 , read - 3000000)
-//   Cache misses: 188 (write - 188 , read - 0)
-//   Missrate: 0.00469648
-//   Cache misses array a: 62 (write - 62 , read - 0)
-//   Cache misses array b: 63 (write - 63 , read - 0)
-//   Cache misses array c: 63 (write - 63 , read - 0)
-//
-//   Cache L2
-//   ... (аналогично)
-//
-//   Memory reads: 188
-//   Memory writes: 188
 
 var (
 	reTime       = regexp.MustCompile(`Time is ([\d.]+)`)
@@ -404,7 +383,6 @@ func parseTextOutput(raw string) (*model.CacheSimResult, error) {
 		}
 
 		if currentLevel == nil {
-			// Глобальные метрики (после блоков L1/L2)
 			if m := reMemReads.FindStringSubmatch(line); m != nil {
 				result.MemoryReads = parseUint(m[1])
 			}
@@ -454,7 +432,6 @@ func parseTextOutput(raw string) (*model.CacheSimResult, error) {
 			continue
 		}
 
-		// После блока L2 переходим к глобальным метрикам
 		if m := reMemReads.FindStringSubmatch(line); m != nil {
 			result.MemoryReads = parseUint(m[1])
 			currentLevel = nil
